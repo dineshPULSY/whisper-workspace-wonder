@@ -3,21 +3,22 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatMessage } from "@/components/ChatMessage";
-import { ChatHistory } from "@/components/ChatHistory";
+// import { ChatHistory } from "@/components/ChatHistory"; // Not directly used in this file's render
 import { ChatExportButton } from "@/components/ChatExportButton";
 import { FileViewer } from "@/components/FileViewer";
 import { BotSettings } from "@/components/BotSettings";
-import { useAuth } from "@/components/AuthProvider";
+import { useAuth } from "@clerk/clerk-react"; // Updated useAuth
+import { useSubscription } from "@/hooks/use-subscription"; // New subscription hook
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, MessageSquare, Settings, Menu, File, Users, Share2 } from "lucide-react";
+import { Loader2, MessageSquare, Settings, Menu, File, Share2 } from "lucide-react"; // Removed Users
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+// import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"; // Not directly used
 import { useChat } from "@/context/ChatContext";
-import { WorkspaceSelector } from "@/components/WorkspaceSelector";
-import { Input } from "@/components/ui/input";
+// import { WorkspaceSelector } from "@/components/WorkspaceSelector"; // Not directly used
+// import { Input } from "@/components/ui/input"; // Not directly used
 import { supabase } from "@/integrations/supabase/client";
 import { ChatShareDialog } from "@/components/ChatShareDialog";
 import { useSettings } from "@/context/SettingsContext";
@@ -27,21 +28,22 @@ import { useGemini } from "@/hooks/use-gemini";
 import { getFileContent } from "@/utils/readFileContent";
 
 function ChatPage() {
-  const { isAuthenticated, user } = useAuth();
+  const { isSignedIn, userId, isLoaded: isAuthLoaded } = useAuth(); // Clerk's useAuth
+  const { subscription, isLoading: isSubscriptionLoading, isActive: isSubscriptionActive } = useSubscription();
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
   const { toast } = useToast();
-  const { chatStyle, botImageUrl, setChatStyle } = useSettings();
+  const { chatStyle, botImageUrl, setChatStyle } = useSettings(); // Assuming useSettings is independent of old AuthProvider
   const { getSuggestions, isSuggestionsLoading } = useGemini();
   
   const {
     sessions,
     activeSessionId,
-    activeWorkspaceId,
+    activeWorkspaceId, // Ensure this is updated if it relied on old user.id
     messages,
     files,
-    isLoading,
+    isLoading: isChatContextLoading, // Renamed to avoid clash with subscription loading
     isProcessing,
     handleSelectSession,
     handleNewSession,
@@ -90,27 +92,26 @@ function ChatPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  // User plan information
-  const userPlan = "Basic";
-  const promptsRemaining = 85;
+  // Removed placeholder userPlan and promptsRemaining
   
-  const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [isInviteOpen, setIsInviteOpen] = useState(false); // This UI might need userId if it's for inviting to user-specific things
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteStatus, setInviteStatus] = useState<null | "success" | "error" | "notfound">(null);
   const [inviteLoading, setInviteLoading] = useState(false);
 
   // Parse workspace ID from URL query parameters when component loads
   useEffect(() => {
-    if (isAuthenticated && !isLoading) {
+    // Ensure chat context isn't loading and user is signed in
+    if (isSignedIn && !isChatContextLoading) {
       const queryParams = new URLSearchParams(location.search);
-      const workspaceId = queryParams.get('workspace');
+      const workspaceIdFromUrl = queryParams.get('workspace'); // Renamed to avoid conflict
       
-      if (workspaceId && workspaceId !== activeWorkspaceId) {
-        console.log('Setting active workspace from URL params:', workspaceId);
-        setActiveWorkspace(workspaceId);
+      if (workspaceIdFromUrl && workspaceIdFromUrl !== activeWorkspaceId) {
+        console.log('Setting active workspace from URL params:', workspaceIdFromUrl);
+        setActiveWorkspace(workspaceIdFromUrl);
       }
     }
-  }, [isAuthenticated, isLoading, location.search, activeWorkspaceId, setActiveWorkspace]);
+  }, [isSignedIn, isChatContextLoading, location.search, activeWorkspaceId, setActiveWorkspace]);
   
   // Generate suggestions based on uploaded files and/or last message
   useEffect(() => {
@@ -181,13 +182,20 @@ function ChatPage() {
       isMounted = false;
       clearTimeout(debounceTimer);
     };
-  }, [messages, files, getSuggestions, isSuggestionsLoading, isProcessing, lastSuggestionUpdate]);
-  
+  }, [messages, files, getSuggestions, isSuggestionsLoading, isProcessing, lastSuggestionUpdate]); // No direct auth dependency here
+
+  // Redirect logic based on auth and subscription status
   useEffect(() => {
-    if (!isAuthenticated) {
-      navigate("/login");
+    if (isAuthLoaded && !isSubscriptionLoading) { // Wait for both to load
+      if (!isSignedIn) {
+        navigate("/login?mode=sign-in"); // Redirect to Clerk login
+      } else if (!isSubscriptionActive) {
+        // User is signed in but has no active subscription (or it's not loaded yet but isLoading is false)
+        navigate("/pricing");
+      }
+      // If signed in and subscription is active, stay on page.
     }
-  }, [isAuthenticated, navigate]);
+  }, [isSignedIn, isSubscriptionActive, isAuthLoaded, isSubscriptionLoading, navigate]);
   
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -366,13 +374,30 @@ function ChatPage() {
     return suggestedPrompts;
   }, [suggestedPrompts]);
 
-  if (!isAuthenticated) {
+  // Full page loading state while auth or subscription is loading
+  if (!isAuthLoaded || isSubscriptionLoading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex h-screen flex-col items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+        <p className="text-lg text-muted-foreground">Loading your session...</p>
       </div>
     );
   }
+
+  // If, after loading, user is not signed in or subscription is not active,
+  // the useEffect above should have redirected. This is a fallback.
+  if (!isSignedIn || !isSubscriptionActive) {
+     // This state should ideally be handled by the redirection useEffect.
+     // If it reaches here, it means redirection hasn't happened yet or there's a race condition.
+     // A simple loading or null return is fine as redirect should occur.
+    return (
+       <div className="flex h-screen flex-col items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+        <p className="text-lg text-muted-foreground">Redirecting...</p>
+      </div>
+    );
+  }
+
 
   // Get appropriate chat title
   const getChatTitle = () => {
@@ -412,14 +437,17 @@ function ChatPage() {
             onDeleteSession={handleDeleteSession}
             onPinSession={handlePinSession}
             onExportChats={handleExportChats}
-            userPlan={userPlan}
-            promptsRemaining={promptsRemaining}
+            // Pass actual subscription data or derived values if ChatSidebar needs them
+            // For now, removing userPlan and promptsRemaining as they were placeholders
+            // userPlan={subscription ? getPlanDisplayName(subscription.stripe_price_id) : "N/A"}
+            // promptsRemaining={undefined} // This would need to come from your subscription logic/limits
             onToggleSidebar={toggleSidebar}
-            onWorkspaceSelect={handleWorkspaceSelect}
+            onWorkspaceSelect={handleWorkspaceSelect} // Ensure this uses Clerk's userId if it's user-specific
           />
         </div>
         
         <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Ensure userId is passed if needed by WorkspaceSelector or other header components indirectly */}
           <div className="flex items-center justify-between border-b p-4">
             <Button
               variant="ghost"
@@ -485,14 +513,14 @@ function ChatPage() {
             <ResizablePanel defaultSize={isFileViewerOpen ? 70 : 100} minSize={40}>
               <div className="flex flex-col h-full">
                 <ScrollArea className="flex-1 p-4">
-                  {isLoading ? (
+                  {isChatContextLoading ? ( // Use renamed isLoading from useChat
                     <div className="flex h-full items-center justify-center">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     </div>
                   ) : messages.length === 0 ? (
                     <div className="flex h-full flex-col items-center justify-center text-center">
                       <div className="rounded-full bg-primary/10 p-4 mb-4">
-                        <MessageSquare className="h-10 w-10 text-primary" />
+                        <MessageSquare className="h-10 w-10 text-primary" /> {/* Icon seems fine */}
                       </div>
                       <h2 className="text-xl font-semibold mb-2">
                         Start a New Conversation

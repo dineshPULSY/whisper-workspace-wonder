@@ -1,10 +1,11 @@
 
 import { useState, useEffect } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { useAuth } from "@/components/AuthProvider";
-import { Menu, X, MessageSquare, Bell, Check, X as XIcon } from "lucide-react";
+import { useAuth, UserButton } from "@clerk/clerk-react"; // Updated useAuth
+import { useSubscription } from "@/hooks/use-subscription"; // New subscription hook
+import { Menu, X, Bell, Check, X as XIcon, Loader2, ExternalLink, Crown } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -14,26 +15,52 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+// Helper to map price IDs to plan names
+const planNameMapping: { [key: string]: string } = {
+  "price_1PTDOEBW9IshQPOYIY96dpIY": "Starter Monthly",
+  "price_1PuUW9BW9IshQPOYxjEGWGdx": "Starter Yearly",
+  "price_1PRPTDBW9IshQPOY344HAEeB": "Basic Monthly",
+  "price_1PuUXgBW9IshQPOYqPLPbsvn": "Basic Yearly",
+  "price_1PRPUnBW9IshQPOY8lWSpbpb": "Pro Monthly",
+  "price_1PXbcfBW9IshQPOYIVhgP6lD": "Pro Yearly",
+};
+
+const getPlanDisplayName = (priceId: string | undefined) => {
+  if (!priceId) return "Unknown Plan";
+  return planNameMapping[priceId] || priceId; // Fallback to priceId if not mapped
+};
+
 export function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [invites, setInvites] = useState([]);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const { isAuthenticated, logout, user } = useAuth();
+  const [invites, setInvites] = useState<any[]>([]); // Explicitly type invites
+  const [showNotifications, setShowNotifications] = useState(false); // Keep this for dialog, separate from dropdown
+  const { isSignedIn, userId, signOut } = useAuth(); // Clerk's useAuth
+  const { subscription, isLoading: isSubscriptionLoading, isActive: isSubscriptionActive } = useSubscription();
   const location = useLocation();
+  const navigate = useNavigate();
+
 
   const isHomePage = location.pathname === "/";
 
   useEffect(() => {
-    if (user?.id) {
-      // fetch invitations
+    if (userId) { // Use userId from Clerk
       supabase
         .from("workspace_invites")
         .select("id, workspace_id, workspace_name")
-        .eq("invitee_id", user.id)
+        .eq("invitee_id", userId) // Use Clerk's userId
         .eq("status", "pending")
-        .then(({ data }) => setInvites(data || []));
+        .then(({ data, error }) => {
+          if (error) {
+            console.error("Error fetching invites:", error);
+            setInvites([]);
+          } else {
+            setInvites(data || []);
+          }
+        });
+    } else {
+      setInvites([]); // Clear invites if no user
     }
-  }, [user]);
+  }, [userId]); // Depend on Clerk's userId
 
   const handleInviteAction = async (inviteId: string, accept: boolean) => {
     // Accept or reject invite
@@ -81,11 +108,11 @@ export function Navbar() {
         <div className="flex items-center gap-3">
           <ThemeToggle />
 
-          {isAuthenticated && (
+          {isSignedIn && ( // Use isSignedIn from Clerk
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
-                  variant={invites.length > 0 ? "secondary" : "ghost"}
+                  variant={invites.length > 0 ? "secondary" : "ghost"} // Keep notification logic
                   size="icon"
                   className="relative"
                 >
@@ -121,26 +148,35 @@ export function Navbar() {
             </DropdownMenu>
           )}
 
-          {!isAuthenticated ? (
+          {!isSignedIn ? ( // Use isSignedIn from Clerk
             <div className="hidden md:flex md:items-center md:gap-2">
-              <Link to="/login">
+              <Link to="/login?mode=sign-in">
                 <Button variant="outline" size="sm" className="font-medium">Login</Button>
               </Link>
-              <Link to="/login?tab=signup">
+              <Link to="/login?mode=sign-up">
                 <Button size="sm" className="font-medium">Sign Up</Button>
               </Link>
             </div>
           ) : (
             <div className="hidden md:flex md:items-center md:gap-3">
+              {isSubscriptionLoading ? (
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              ) : isSubscriptionActive && subscription ? (
+                <Link to="/pricing" className="flex items-center text-sm font-medium text-primary hover:underline">
+                  <Crown className="h-4 w-4 mr-1 text-yellow-500" /> {getPlanDisplayName(subscription.stripe_price_id)}
+                </Link>
+              ) : (
+                <Link to="/pricing">
+                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive-foreground">
+                    Subscribe
+                  </Button>
+                </Link>
+              )}
               <Link to="/chat">
                 <Button variant="outline" size="sm">Chat</Button>
               </Link>
-              <Link to="/workspace">
-                <Button variant="outline" size="sm">Workspace</Button>
-              </Link>
-              <Button variant="ghost" size="sm" onClick={logout}>
-                Logout
-              </Button>
+              {/* Use Clerk's UserButton for profile management and logout */}
+              <UserButton afterSignOutUrl="/" />
             </div>
           )}
           
@@ -163,24 +199,40 @@ export function Navbar() {
             {isHomePage && (
               <>
                 <NavLink to="/#features" label="Features" />
-                <NavLink to="/#pricing" label="Pricing" />
+                {/* Link to /pricing directly instead of /#pricing */}
+                <NavLink to="/pricing" label="Pricing" />
               </>
             )}
             <NavLink to="/faq" label="FAQ" />
             
             <div className="h-px bg-border/60 my-1"></div>
             
-            {!isAuthenticated ? (
+            {!isSignedIn ? ( // Use isSignedIn from Clerk
               <div className="flex flex-col gap-2 mt-2">
-                <Link to="/login" onClick={() => setIsMenuOpen(false)}>
+                <Link to="/login?mode=sign-in" onClick={() => setIsMenuOpen(false)}>
                   <Button variant="outline" className="w-full">Login</Button>
                 </Link>
-                <Link to="/login?tab=signup" onClick={() => setIsMenuOpen(false)}>
+                <Link to="/login?mode=sign-up" onClick={() => setIsMenuOpen(false)}>
                   <Button className="w-full">Sign Up</Button>
                 </Link>
               </div>
             ) : (
               <div className="flex flex-col gap-2 mt-2">
+                 {isSubscriptionLoading ? (
+                  <div className="flex items-center justify-center py-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : isSubscriptionActive && subscription ? (
+                  <Link to="/pricing" className="text-sm font-medium text-primary p-2 text-center rounded-md hover:bg-accent" onClick={() => setIsMenuOpen(false)}>
+                     <Crown className="h-4 w-4 mr-1 inline text-yellow-500" /> {getPlanDisplayName(subscription.stripe_price_id)}
+                  </Link>
+                ) : (
+                  <Link to="/pricing" onClick={() => setIsMenuOpen(false)}>
+                    <Button variant="ghost" className="w-full text-destructive hover:text-destructive-foreground">
+                      Subscribe
+                    </Button>
+                  </Link>
+                )}
                 <Link to="/chat" onClick={() => setIsMenuOpen(false)}>
                   <Button variant="outline" className="w-full">Chat</Button>
                 </Link>
@@ -190,8 +242,8 @@ export function Navbar() {
                 <Button 
                   variant="ghost" 
                   className="w-full" 
-                  onClick={() => {
-                    logout();
+                  onClick={async () => {
+                    await signOut(() => navigate("/")); // Use Clerk's signOut and navigate
                     setIsMenuOpen(false);
                   }}
                 >
