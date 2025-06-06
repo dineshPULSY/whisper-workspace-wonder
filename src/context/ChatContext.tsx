@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useAuth } from '@/components/AuthProvider';
+import { useAuth } from "@clerk/clerk-react"; // Changed import
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ChatSession, ChatMessage, WorkspaceFile } from '@/models/workspace';
@@ -40,7 +40,7 @@ interface ChatContextType {
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-  const { isAuthenticated, user } = useAuth();
+  const { isSignedIn, userId, isLoaded: isAuthLoaded } = useAuth(); // Changed usage
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -64,15 +64,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, [location.search]);
   
   useEffect(() => {
-    if (!activeWorkspaceId || !isAuthenticated || !user) return;
+    // Ensure auth is loaded and user is signed in before loading data
+    if (!isAuthLoaded || !isSignedIn || !userId || !activeWorkspaceId) {
+      // If not authenticated or no workspace, clear data or set to default
+      if (isAuthLoaded && !isSignedIn) { // Only clear if auth is loaded and confirmed not signed in
+        setSessions([]);
+        setActiveSessionId(null);
+        setMessages([]);
+        setFiles([]);
+        setIsLoading(false);
+      }
+      return;
+    }
     
     async function loadData() {
       try {
         setIsLoading(true);
-        console.log('Loading data for workspace:', activeWorkspaceId);
+        console.log('Loading data for workspace:', activeWorkspaceId, 'User:', userId);
         
         // Fetch chat sessions
-        const chatSessions = await fetchChatSessions(activeWorkspaceId);
+        const chatSessions = await fetchChatSessions(activeWorkspaceId); // Assumes fetchChatSessions doesn't directly need userId if workspace implies it
         console.log('Fetched chat sessions:', chatSessions);
         setSessions(chatSessions);
         
@@ -87,7 +98,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
         
         // Fetch workspace files
-        const workspaceFiles = await fetchWorkspaceFiles(activeWorkspaceId);
+        const workspaceFiles = await fetchWorkspaceFiles(activeWorkspaceId); // Assumes fetchWorkspaceFiles doesn't directly need userId
         console.log('Fetched workspace files:', workspaceFiles);
         setFiles(workspaceFiles);
         
@@ -104,9 +115,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
     
     loadData();
-  }, [activeWorkspaceId, isAuthenticated, user, toast]);
+  }, [activeWorkspaceId, isSignedIn, userId, isAuthLoaded, toast]); // Updated dependencies
   
   const handleSelectSession = async (sessionId: string) => {
+    // No direct auth check needed here as data should be loaded based on auth state
     try {
       setActiveSessionId(sessionId);
       const sessionMessages = await fetchChatMessages(sessionId);
@@ -122,7 +134,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   };
   
   const handleNewSession = async (initialMessage?: string) => {
-    if (!user || !activeWorkspaceId) return;
+    if (!isSignedIn || !userId || !activeWorkspaceId) { // Check isSignedIn and userId
+      toast({ title: "Error", description: "User not authenticated or no workspace selected.", variant: "destructive" });
+      return;
+    }
     
     try {
       let title = 'New Conversation';
@@ -131,7 +146,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
       
       console.log('Creating new session with title:', title);
-      const newSession = await createChatSession(activeWorkspaceId, user.id, title);
+      const newSession = await createChatSession(activeWorkspaceId, userId, title); // Use userId
       console.log('New session created:', newSession);
       
       if (initialMessage) {
@@ -297,8 +312,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   };
   
   const handleSendMessage = async (content: string) => {
-    if (!user || !activeWorkspaceId) {
-      console.error('No user or active workspace');
+    if (!isSignedIn || !userId || !activeWorkspaceId) { // Check isSignedIn and userId
+      toast({ title: "Error", description: "Cannot send message: User not authenticated or no workspace selected.", variant: "destructive" });
       return;
     }
     
@@ -322,8 +337,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   };
   
   const handleFileUpload = async (file: File): Promise<void> => {
-    if (!user || !activeWorkspaceId) {
-      console.error('No user or active workspace');
+    if (!isSignedIn || !userId || !activeWorkspaceId) { // Check isSignedIn and userId
+      toast({ title: "Error", description: "Cannot upload file: User not authenticated or no workspace selected.", variant: "destructive" });
       return;
     }
     
@@ -343,7 +358,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           size: ((file as any).url as string).length,
           uploadedAt: new Date().toISOString(), // Store as ISO string
           workspaceId: activeWorkspaceId,
-          userId: user.id
+          userId: userId // Use userId
         } as unknown as WorkspaceFile; // Cast to WorkspaceFile after ensuring type compatibility
         
         console.log('Created URL file object:', urlFile);
@@ -357,7 +372,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
       
       // Normal file upload flow
-      const uploadedFile = await uploadWorkspaceFile(activeWorkspaceId, user.id, file);
+      const uploadedFile = await uploadWorkspaceFile(activeWorkspaceId, userId, file); // Use userId
       console.log('File uploaded successfully:', uploadedFile);
       
       setFiles(prev => [...prev, uploadedFile]);

@@ -1,7 +1,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/components/AuthProvider';
+import { useAuth } from "@clerk/clerk-react"; // Changed import
 
 export type ChatLayoutStyle = 'standard' | 'compact' | 'bubble';
 
@@ -18,15 +18,19 @@ const SettingsContext = createContext<SettingsContextType | undefined>(undefined
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [chatStyle, setChatStyle] = useState<ChatLayoutStyle>('standard');
   const [botImageUrl, setBotImageUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const { user } = useAuth();
+  const [isLoading, setIsLoading] = useState(false); // For settings data loading
+  const { userId, isSignedIn, isLoaded: isAuthLoaded } = useAuth(); // Changed usage
 
   // Load settings from local storage or database
   useEffect(() => {
-    if (user) {
+    // Only attempt to load from DB if auth is loaded and user is signed in
+    if (isAuthLoaded && isSignedIn && userId) {
       setIsLoading(true);
       
-      // First try to load from localStorage for immediate feedback
+      // First try to load from localStorage for immediate feedback (can be done regardless of auth state)
+      // However, DB fetch should only happen for authenticated user.
+      // For consistency, we can keep localStorage loading here or move it outside if it should always apply.
+      // Let's assume settings are user-specific, so localStorage loading is also tied to user session.
       const savedChatStyle = localStorage.getItem('chatStyle');
       const savedBotImage = localStorage.getItem('botImageUrl');
       
@@ -44,7 +48,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
           const { data, error } = await supabase
             .from('user_settings')
             .select('chat_style, bot_image_url')
-            .eq('user_id', user.id)
+            .eq('user_id', userId) // Use userId
             .single();
             
           if (!error && data) {
@@ -66,31 +70,40 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       };
       
       fetchSettings();
+    } else if (isAuthLoaded && !isSignedIn) {
+      // User is not signed in, clear any user-specific settings if necessary
+      // or load default settings. For now, we just ensure isLoading is false.
+      setIsLoading(false);
+      // Optionally clear localStorage if settings are strictly per-user and should not persist across logins
+      // localStorage.removeItem('chatStyle');
+      // localStorage.removeItem('botImageUrl');
+      // setChatStyle('standard'); // Reset to default
+      // setBotImageUrl(null);
     }
-  }, [user]);
+  }, [userId, isSignedIn, isAuthLoaded]); // Updated dependencies
 
   // Save settings whenever they change
   const saveSettings = async (style: ChatLayoutStyle, imageUrl: string | null) => {
-    // Save to localStorage for immediate feedback
+    // Save to localStorage for immediate feedback (can be done regardless of auth state)
     localStorage.setItem('chatStyle', style);
     if (imageUrl) localStorage.setItem('botImageUrl', imageUrl);
     else localStorage.removeItem('botImageUrl');
     
-    // Save to database if user is logged in
-    if (user) {
+    // Save to database only if user is signed in and userId is available
+    if (isSignedIn && userId) {
       try {
         const { error } = await supabase
           .from('user_settings')
           .upsert({
-            user_id: user.id,
+            user_id: userId, // Use userId
             chat_style: style,
             bot_image_url: imageUrl,
             updated_at: new Date()
           }, { onConflict: 'user_id' });
           
-        if (error) console.error('Error saving settings:', error);
+        if (error) console.error('Error saving settings to DB:', error);
       } catch (err) {
-        console.error('Error saving settings:', err);
+        console.error('Error in saveSettings DB operation:', err);
       }
     }
   };
