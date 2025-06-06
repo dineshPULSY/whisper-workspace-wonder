@@ -1,18 +1,29 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@10.17.0?target=deno"; // Use Deno-compatible Stripe
-import { corsHeaders } from "../_shared/cors.ts"; // Assuming a shared CORS config
+import { getCorsHeaders } from "../_shared/cors.ts"; // Changed import
 
 // Initialize Stripe
-const stripe = Stripe(Deno.env.get("STRIPE_SECRET_KEY")!, {
+const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY");
+const stripe = Stripe(stripeSecretKey!, {
   // @ts-ignore // Deno compatibility
   httpClient: Stripe.createFetchHttpClient(),
   apiVersion: "2023-10-16",
 });
 
 serve(async (req: Request) => {
+  const requestOrigin = req.headers.get("Origin");
+  const currentCorsHeaders = getCorsHeaders(requestOrigin);
+
   // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers: currentCorsHeaders });
+  }
+
+  if (!stripeSecretKey) {
+     return new Response(JSON.stringify({ error: "Stripe secret key not configured on server." }), {
+        status: 500,
+        headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   try {
@@ -20,7 +31,7 @@ serve(async (req: Request) => {
     if (req.method !== "POST") {
       return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
         status: 405,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -30,7 +41,7 @@ serve(async (req: Request) => {
     if (!priceId || !clerkUserId) {
       return new Response(JSON.stringify({ error: "Missing priceId or clerkUserId" }), {
         status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -59,14 +70,14 @@ serve(async (req: Request) => {
 
     return new Response(JSON.stringify({ sessionId: session.id }), {
       status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
     console.error("Error creating checkout session:", error);
     return new Response(JSON.stringify({ error: error.message || "Internal Server Error" }), {
       status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
     });
   }
 });

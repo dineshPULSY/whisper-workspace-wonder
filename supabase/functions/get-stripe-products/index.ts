@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@10.17.0?target=deno";
-import { corsHeaders } from "../_shared/cors.ts"; // Assuming shared CORS config
+import { getCorsHeaders } from "../_shared/cors.ts"; // Changed import
 
 // Initialize Stripe - ensure STRIPE_SECRET_KEY is set in Function Environment Variables
 const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY");
@@ -14,23 +14,26 @@ const stripe = Stripe(stripeSecretKey!, {
   apiVersion: "2023-10-16", // Use a consistent API version
 });
 
-serve(async (_req: Request) => {
+serve(async (req: Request) => { // Renamed _req to req
+  const requestOrigin = req.headers.get("Origin");
+  const currentCorsHeaders = getCorsHeaders(requestOrigin);
+
   // Handle CORS preflight requests
-  if (_req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: currentCorsHeaders });
   }
 
-  if (_req.method !== "GET") {
+  if (req.method !== "GET") {
     return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
       status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  if (!stripeSecretKey) { // Redundant check if stripe init fails, but good for explicit error
+  if (!stripeSecretKey) {
     return new Response(JSON.stringify({ error: "Stripe secret key not configured on server." }), {
         status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
     });
   }
 
@@ -92,14 +95,14 @@ serve(async (_req: Request) => {
     console.log("Successfully transformed products.");
     return new Response(JSON.stringify(transformedProducts), {
       status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
     console.error("Error fetching or transforming Stripe products:", error);
     return new Response(JSON.stringify({ error: error.message || "Internal Server Error" }), {
       status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...currentCorsHeaders, "Content-Type": "application/json" },
     });
   }
 });

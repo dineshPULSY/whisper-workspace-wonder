@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders } from "../_shared/cors.ts"; // Assuming shared CORS config
+import { getCorsHeaders } from "../_shared/cors.ts"; // Changed import
 
 // IMPORTANT: Set these environment variables in your Supabase Function settings
 // SUPABASE_URL is generally available via Deno.env.get("SUPABASE_URL")
@@ -12,16 +12,19 @@ const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
 
 serve(async (req: Request) => {
+  const requestOrigin = req.headers.get("Origin");
+  const currentCorsHeaders = getCorsHeaders(requestOrigin);
+
   // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers: currentCorsHeaders });
   }
 
   if (!supabaseUrl || !supabaseServiceRoleKey) {
     console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in function settings.");
     return new Response(JSON.stringify({ error: "Function not configured correctly." }), {
       status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...currentCorsHeaders, "Content-Type": "application/json" }, // Use currentCorsHeaders
     });
   }
 
@@ -44,14 +47,14 @@ serve(async (req: Request) => {
     } else {
       return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
         status: 405,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...currentCorsHeaders, "Content-Type": "application/json" }, // Use currentCorsHeaders
       });
     }
 
     if (!clerkUserId) {
       return new Response(JSON.stringify({ error: "clerk_user_id is required" }), {
         status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...currentCorsHeaders, "Content-Type": "application/json" }, // Use currentCorsHeaders
       });
     }
 
@@ -72,27 +75,27 @@ serve(async (req: Request) => {
       console.error("Database error fetching subscription:", error);
       return new Response(JSON.stringify({ error: `Database error: ${error.message}` }), {
         status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...currentCorsHeaders, "Content-Type": "application/json" }, // Use currentCorsHeaders
       });
     }
 
     if (!data) {
       return new Response(JSON.stringify(null), { // Return null if no active subscription found
         status: 200, // Or 404 if you prefer, but 200 with null body is also common
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...currentCorsHeaders, "Content-Type": "application/json" }, // Use currentCorsHeaders
       });
     }
 
     return new Response(JSON.stringify(data), {
       status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...currentCorsHeaders, "Content-Type": "application/json" }, // Use currentCorsHeaders
     });
 
   } catch (error) {
     console.error("Error fetching user subscription:", error.message, error.stack);
     return new Response(JSON.stringify({ error: "Internal Server Error" }), {
       status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...currentCorsHeaders, "Content-Type": "application/json" }, // Use currentCorsHeaders
     });
   }
 });
