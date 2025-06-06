@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
-import { useAuth } from "@/components/AuthProvider";
+import { useAuth } from "@clerk/clerk-react"; // Changed import
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -32,7 +32,7 @@ import { fetchUserWorkspaces, createWorkspace, deleteWorkspace, uploadWorkspaceF
 import { Workspace, WorkspaceFile } from "@/models/workspace";
 
 export default function WorkspacePage() {
-  const { isAuthenticated, user } = useAuth();
+  const { isSignedIn, userId, isLoaded: isAuthLoaded } = useAuth(); // Changed usage
   const navigate = useNavigate();
   const { toast } = useToast();
   
@@ -40,7 +40,7 @@ export default function WorkspacePage() {
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [newWorkspaceDescription, setNewWorkspaceDescription] = useState("");
   const [isCreating, setIsCreating] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // This will be for workspace data loading
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -48,17 +48,22 @@ export default function WorkspacePage() {
   const [workspaceFiles, setWorkspaceFiles] = useState<Record<string, WorkspaceFile[]>>({});
   
   useEffect(() => {
-    if (!isAuthenticated) {
-      navigate("/login");
+    if (!isAuthLoaded) {
+      // Still waiting for Clerk to load, do nothing or show a specific loader for auth
+      return;
+    }
+
+    if (!isSignedIn) {
+      navigate("/login?mode=sign-in"); // Redirect to Clerk login
       return;
     }
     
     async function loadWorkspaces() {
-      if (!user) return;
+      if (!userId) return; // Should be available if isSignedIn is true
       
       try {
-        setIsLoading(true);
-        const userWorkspaces = await fetchUserWorkspaces(user.id);
+        setIsLoading(true); // For workspace data loading
+        const userWorkspaces = await fetchUserWorkspaces(userId); // Use userId
         setWorkspaces(userWorkspaces);
         
         const filesMap: Record<string, WorkspaceFile[]> = {};
@@ -75,15 +80,15 @@ export default function WorkspacePage() {
           variant: "destructive"
         });
       } finally {
-        setIsLoading(false);
+        setIsLoading(false); // For workspace data loading
       }
     }
     
     loadWorkspaces();
-  }, [isAuthenticated, navigate, user, toast]);
+  }, [isAuthLoaded, isSignedIn, userId, navigate, toast]); // Added isAuthLoaded and userId
   
   const handleCreateWorkspace = async () => {
-    if (!user) return;
+    if (!userId) return; // Check userId
     
     if (!newWorkspaceName.trim()) {
       toast({
@@ -98,7 +103,7 @@ export default function WorkspacePage() {
     
     try {
       const workspace = await createWorkspace(
-        user.id,
+        userId, // Use userId
         newWorkspaceName,
         newWorkspaceDescription || undefined
       );
@@ -158,7 +163,7 @@ export default function WorkspacePage() {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, workspaceId: string) => {
-    if (!user) return;
+    if (!userId) return; // Check userId
     
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -171,7 +176,7 @@ export default function WorkspacePage() {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         console.log('Uploading file:', file.name, 'to workspace:', workspaceId);
-        const uploadedFile = await uploadWorkspaceFile(workspaceId, user.id, file);
+        const uploadedFile = await uploadWorkspaceFile(workspaceId, userId, file); // Use userId
         uploadedFiles.push(uploadedFile);
       }
       
@@ -236,14 +241,28 @@ export default function WorkspacePage() {
     return <FileText className="h-5 w-5 text-gray-500" />;
   };
   
-  if (!isAuthenticated) {
+  // Handle auth loading state
+  if (!isAuthLoaded) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex h-screen flex-col items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+        <p className="text-lg text-muted-foreground">Loading authentication...</p>
+      </div>
+    );
+  }
+
+  // If auth is loaded but user is not signed in, useEffect should redirect.
+  // This is a fallback or could be shown while redirecting.
+  if (!isSignedIn) {
+     return (
+      <div className="flex h-screen flex-col items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+        <p className="text-lg text-muted-foreground">Redirecting to login...</p>
       </div>
     );
   }
   
+  // If signedIn, proceed to render the page content (isLoading now refers to workspace data)
   return (
     <div className="flex min-h-screen flex-col">
       <Navbar />

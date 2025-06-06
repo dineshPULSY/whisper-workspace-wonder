@@ -14,8 +14,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Check, ChevronsUpDown, Plus, FolderPlus } from "lucide-react";
-import { useAuth } from "@/components/AuthProvider";
+import { Check, ChevronsUpDown, Plus, FolderPlus, Loader2 } from "lucide-react"; // Added Loader2
+import { useAuth } from "@clerk/clerk-react"; // Changed import
 import { fetchUserWorkspaces, createWorkspace } from "@/services/workspace-service";
 import { Workspace } from "@/models/workspace";
 import { useToast } from "@/hooks/use-toast";
@@ -26,31 +26,43 @@ interface WorkspaceSelectorProps {
 }
 
 export function WorkspaceSelector({ onSelect, initialWorkspaceId }: WorkspaceSelectorProps) {
-  const { user } = useAuth();
+  const { userId, isSignedIn, isLoaded: isAuthLoaded } = useAuth(); // Changed usage
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // For workspace data loading
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [lastFetchedUserId, setLastFetchedUserId] = useState<string | null>(null);
+  const [lastFetchedUserId, setLastFetchedUserId] = useState<string | null>(null); // To prevent re-fetching for same user
   
   useEffect(() => {
     async function loadWorkspaces() {
-      if (!user || user.id === lastFetchedUserId) return;
+      // Wait for auth to load and user to be signed in
+      if (!isAuthLoaded || !isSignedIn || !userId) {
+        setIsLoading(false); // Not loading workspaces if no user
+        setWorkspaces([]); // Clear workspaces if user logs out
+        setLastFetchedUserId(null);
+        return;
+      }
+
+      // Avoid re-fetching if userId hasn't changed since last successful fetch
+      if (userId === lastFetchedUserId) {
+        setIsLoading(false); // Already loaded for this user
+        return;
+      }
       
       try {
         setIsLoading(true);
         setLoadError(null);
         
-        console.log('Fetching workspaces for user:', user.id);
-        const userWorkspaces = await fetchUserWorkspaces(user.id);
+        console.log('Fetching workspaces for user:', userId);
+        const userWorkspaces = await fetchUserWorkspaces(userId);
         console.log('Fetched workspaces:', userWorkspaces);
         
         setWorkspaces(userWorkspaces);
-        setLastFetchedUserId(user.id);
+        setLastFetchedUserId(userId); // Store the userId for which data was fetched
         
         // Select the first workspace by default or the one specified by initialWorkspaceId
         if (userWorkspaces.length > 0) {
@@ -66,18 +78,23 @@ export function WorkspaceSelector({ onSelect, initialWorkspaceId }: WorkspaceSel
           
           setSelectedWorkspace(workspaceToSelect);
           onSelect(workspaceToSelect.id);
+        } else {
+          // If user has no workspaces, ensure selectedWorkspace is null and onSelect might not be called
+          // or called with a specific value indicating no workspace.
+          setSelectedWorkspace(null);
+          // onSelect(""); // Or handle as per application logic for no workspace
         }
       } catch (err) {
         console.error('Error loading workspaces:', err);
-        setWorkspaces([]); // Set empty array on error to avoid undefined
-        setLoadError("Failed to load workspaces. Please check the database connection.");
+        setWorkspaces([]);
+        setLoadError("Failed to load workspaces. Please try again.");
       } finally {
         setIsLoading(false);
       }
     }
     
     loadWorkspaces();
-  }, [user, onSelect, initialWorkspaceId, lastFetchedUserId]);
+  }, [isAuthLoaded, isSignedIn, userId, onSelect, initialWorkspaceId, lastFetchedUserId]);
   
   // Memoize handlers to prevent unnecessary re-renders
   const handleSelect = useCallback((workspace: Workspace) => {
@@ -87,7 +104,7 @@ export function WorkspaceSelector({ onSelect, initialWorkspaceId }: WorkspaceSel
   }, [onSelect]);
   
   const handleCreateWorkspace = useCallback(async () => {
-    if (!user) {
+    if (!isSignedIn || !userId) { // Check isSignedIn and userId
       toast({
         title: "Authentication Error",
         description: "You must be logged in to create a workspace.",
@@ -108,7 +125,7 @@ export function WorkspaceSelector({ onSelect, initialWorkspaceId }: WorkspaceSel
       
       try {
         console.log('Creating new workspace:', newWorkspaceName);
-        const newWorkspace = await createWorkspace(user.id, newWorkspaceName);
+        const newWorkspace = await createWorkspace(userId, newWorkspaceName); // Use userId
         console.log('Workspace created:', newWorkspace);
         
         // Add the new workspace to the local state
@@ -140,14 +157,17 @@ export function WorkspaceSelector({ onSelect, initialWorkspaceId }: WorkspaceSel
       // Enter workspace creation mode
       setIsCreatingWorkspace(true);
     }
-  }, [isCreatingWorkspace, newWorkspaceName, onSelect, toast, user]);
+  }, [isCreatingWorkspace, newWorkspaceName, onSelect, toast, isSignedIn, userId]); // Added isSignedIn, userId
 
   // Memoize the button text to prevent unnecessary re-renders
   const buttonText = useMemo(() => {
-    if (isLoading) return "Loading workspaces...";
+    if (!isAuthLoaded || isLoading) return "Loading..."; // Combined loading state for auth and data
+    if (!isSignedIn) return "Login to see workspaces";
     if (selectedWorkspace) return selectedWorkspace.name;
+    if (workspaces.length === 0 && !loadError) return "No workspaces yet";
+    if (loadError) return "Error loading";
     return "Select workspace";
-  }, [isLoading, selectedWorkspace]);
+  }, [isAuthLoaded, isLoading, isSignedIn, selectedWorkspace, workspaces.length, loadError]);
   
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -157,8 +177,9 @@ export function WorkspaceSelector({ onSelect, initialWorkspaceId }: WorkspaceSel
           role="combobox"
           aria-expanded={open}
           className="w-full justify-between"
-          disabled={isLoading}
+          disabled={!isAuthLoaded || isLoading || !isSignedIn} // Disable if auth not loaded, data loading, or not signed in
         >
+          {isLoading && isAuthLoaded && isSignedIn ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
           {buttonText}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
