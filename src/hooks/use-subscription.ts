@@ -69,18 +69,18 @@ export const useSubscription = () => {
     data: subscription,
     isLoading,
     error,
-    refetch, // Allow refetching subscription
-  } = useQuery<UserSubscription | null, Error>(
-    ["userSubscription", userId], // Query key includes userId to refetch if it changes
-    // () => fetchUserSubscription(userId!, getToken), // Pass getToken if using Clerk JWT for Supabase Auth
-    () => fetchUserSubscription(userId!),
-    {
-      enabled: !!userId && !!isSignedIn, // Only run the query if the user is signed in and userId is available
-      staleTime: 5 * 60 * 1000, // Cache data for 5 minutes
-      cacheTime: 10 * 60 * 1000, // Keep data in cache for 10 minutes
-      // You might want to add retry logic or onError handlers here
-    }
-  );
+    refetch,
+  } = useQuery({ // Updated to React Query v5 object signature
+    queryKey: ["userSubscription", userId],
+    queryFn: () => fetchUserSubscription(userId!),
+    enabled: !!userId && !!isSignedIn,
+    staleTime: 5 * 60 * 1000,
+    cacheTime: 10 * 60 * 1000,
+    // Type inference should handle UserSubscription | null for data and Error for error,
+    // as fetchUserSubscription returns Promise<UserSubscription | null>.
+    // If explicit typing is needed:
+    // queryFn: async (): Promise<UserSubscription | null> => fetchUserSubscription(userId!),
+  });
 
   return {
     subscription,
